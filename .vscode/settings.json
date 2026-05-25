@@ -1,0 +1,8 @@
+{
+    "idf.currentSetup": "/Users/luolitao/.espressif/v6.0.1/esp-idf",
+    "idf.port": "/dev/tty.usbserial-A5069RR4",
+    "idf.openOcdConfigs": [
+        "board/esp32s3-builtin.cfg"
+    ],
+    "idf.flashType": "UART"
+}

@@ -1,0 +1,2 @@
+source /Users/luolitao/esp32s3/RemoteIDSpoofer-master/RemoteIDSpoofer/build/gdbinit/symbols
+source /Users/luolitao/esp32s3/RemoteIDSpoofer-master/RemoteIDSpoofer/build/gdbinit/connect
