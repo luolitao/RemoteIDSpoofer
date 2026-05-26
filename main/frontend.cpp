@@ -24,6 +24,15 @@ Frontend::Frontend(unsigned long idletime)
         
         nvs_get_i32(nvs_handle, num_drones_key, (int32_t*)&num_drones);
         
+#if ID_CHINA
+        char caac_reg[32];
+        size_t reg_size = sizeof(caac_reg);
+        if (nvs_get_str(nvs_handle, "caac_reg", caac_reg, &reg_size) == ESP_OK) {
+            strncpy(caac_registration, caac_reg, sizeof(caac_registration) - 1);
+            caac_registration[sizeof(caac_registration) - 1] = '\0';
+        }
+#endif
+        
         nvs_close(nvs_handle);
     } else {
         ESP_LOGI(TAG, "NVS data not written before...");
@@ -161,11 +170,24 @@ esp_err_t Frontend::handleSetCoords(httpd_req_t *req) {
             longitude = atof(lon_value);
         }
         
+#if ID_CHINA
+        char caac_reg_value[32];
+        if (httpd_query_key_value(param, "caac_reg", caac_reg_value, sizeof(caac_reg_value)) == ESP_OK) {
+            strncpy(caac_registration, caac_reg_value, sizeof(caac_registration) - 1);
+            caac_registration[sizeof(caac_registration) - 1] = '\0';
+        }
+#endif
+        
         // 保存到 NVS
         nvs_handle_t nvs_handle;
         if (nvs_open(nvs_namespace, NVS_READWRITE, &nvs_handle) == ESP_OK) {
             nvs_set_blob(nvs_handle, latitude_key, &latitude, sizeof(latitude));
             nvs_set_blob(nvs_handle, longitude_key, &longitude, sizeof(longitude));
+            
+#if ID_CHINA
+            nvs_set_str(nvs_handle, "caac_reg", caac_registration);
+#endif
+            
             nvs_commit(nvs_handle);
             nvs_close(nvs_handle);
         }
@@ -255,6 +277,16 @@ std::string Frontend::HTML() {
           <br>
           Longitude: <input class="selection" type="text" name="longitude">
           <br>
+    )rawliteral";
+
+#if ID_CHINA
+    msg << R"rawliteral(
+          CAAC Registration: <input class="selection" type="text" name="caac_reg" maxlength="15" pattern="[0-9]{15}">
+          <br>
+    )rawliteral";
+#endif
+
+    msg << R"rawliteral(
           <input class="selection" type="submit" value="Submit">
         </form>
         <form class="configurator" action="/numdrones">
@@ -277,6 +309,12 @@ std::string Frontend::HTML() {
     msg << ", ";
     msg << std::fixed << std::setprecision(10) << longitude;
     msg << "</p>\n";
+
+#if ID_CHINA
+    msg << "<p><b>CAAC Registration:</b>";
+    msg << caac_registration;
+    msg << "</p>\n";
+#endif
 
     msg << "<p><b>Current No. of Drones:</b>";
     msg << num_drones;

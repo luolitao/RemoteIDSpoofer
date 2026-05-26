@@ -24,6 +24,16 @@ void Spoofer::init() {
   utm_parameters.region      = 1;
   utm_parameters.EU_category = 1;
   utm_parameters.EU_class    = 5;
+  
+#if ID_CHINA
+  // 设置 CAAC 实名登记码示例 (实际使用时应从 NVS 或配置获取)
+  // 格式: 15位数字，例如: 123456789012345
+  strncpy(utm_parameters.caac_registration, "123456789012345", 
+          sizeof(utm_parameters.caac_registration) - 1);
+  utm_parameters.caac_registration[sizeof(utm_parameters.caac_registration) - 1] = '\0';
+  utm_parameters.caac_uom_code = 0x01;
+#endif
+  
   squitter.init(&utm_parameters);
   memset(&utm_data, 0, sizeof(utm_data));
 }
@@ -39,7 +49,7 @@ void Spoofer::updateLocation(float latitude, float longitude) {
   utm_data.base_valid = 1;
   utm_data.base_alt_m = (float) (esp_random() % 1000) / 10.0;
 
-  utm_utils.calc_m_per_deg(utm_data.latitude_d, &m_deg_lat, &m_deg_long);
+  utm_utils.calc_m_per_deg(utm_data.latitude_d, utm_data.longitude_d, &m_deg_lat, &m_deg_long);
 }
 
 void Spoofer::update() {

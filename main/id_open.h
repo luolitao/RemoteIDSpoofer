@@ -27,12 +27,16 @@
 // National/regional specific RIDs.
 
 #define ID_JAPAN          0        // Experimental
+#define ID_CHINA          1        // China CAAC standard
 
 #if (ID_JAPAN) && (ID_OD_WIFI_NAN || USE_BEACON_FUNC || !ID_OD_WIFI_BEACON)
 #warning "National IDs will only work with WIFI_BEACON"
 #define ID_NATIONAL       0
+#elif (ID_CHINA) && (ID_OD_WIFI_NAN || USE_BEACON_FUNC || !ID_OD_WIFI_BEACON)
+#warning "National IDs will only work with WIFI_BEACON"
+#define ID_NATIONAL       0
 #else
-#define ID_NATIONAL       ID_JAPAN
+#define ID_NATIONAL       (ID_JAPAN || ID_CHINA)
 #endif
 
 #if ID_OD_WIFI_NAN || ID_OD_WIFI_BEACON
@@ -49,6 +53,9 @@
  
 #if ID_JAPAN
 #define WIFI_COUNTRY_CC    "JP"
+#define WIFI_COUNTRY_NCHAN 13
+#elif ID_CHINA
+#define WIFI_COUNTRY_CC    "CN"
 #define WIFI_COUNTRY_NCHAN 13
 #else
 #define WIFI_COUNTRY_CC    "ZZ"
@@ -103,6 +110,10 @@ private:
   void     init_beacon(void);
 #if ID_NATIONAL
   int      pack_encrypt_national(uint8_t *);
+#endif
+#if ID_CHINA
+  int      build_caac_message(uint8_t *buffer, int max_len);
+  void     encode_caac_basic_id(const char *registration_id, uint8_t *output);
 #endif
   int      transmit_wifi(struct UTM_data *,int);
   int      transmit_ble(uint8_t *,int);

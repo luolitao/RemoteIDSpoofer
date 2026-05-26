@@ -8,6 +8,11 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 
+#elif defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3)
+
+// ESP-IDF environment - no Arduino headers needed
+// Using native ESP-IDF components
+
 #else
 
 #pragma message ("Unknown Device!")
@@ -24,6 +29,7 @@
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_event.h"
+#include "id_open.h"
 
 class Frontend {
   private:
@@ -50,6 +56,10 @@ class Frontend {
     double latitude = 52.439100;
     double longitude = -1.503900;
     int num_drones = 16;
+    
+#if ID_CHINA
+    char caac_registration[32] = "123456789012345";  // Default CAAC registration
+#endif
 };
 
 #endif

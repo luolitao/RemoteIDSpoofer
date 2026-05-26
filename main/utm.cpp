@@ -16,163 +16,98 @@
 #include "arduino_compat.h"
 
 #include "utm.h"
+#include <math.h>
+#include <string.h>
+#include <stdio.h>
 
-/*
- *
- */
+// WGS84 constants
+static const double a = 6378137.0;
+static const double e2 = 6.69437999014e-3;
 
 UTM_Utilities::UTM_Utilities() {
-
-  memset(s,0,sizeof(s));
-
-  return;
+    // Default constructor - nothing to initialize
 }
 
-/*
- *
- */
-
-void UTM_Utilities::calc_m_per_deg(double lat_d,double long_d,double *m_deg_lat,double *m_deg_long) {
-
-  calc_m_per_deg(lat_d,m_deg_lat,m_deg_long);
-
-  return;
+void UTM_Utilities::calc_m_per_deg(double lat_d, double long_d, double *m_deg_lat, double *m_deg_long) {
+    double lat_r = lat_d * M_PI / 180.0;
+    
+    // Radius of curvature in the meridian
+    double rho = a * (1 - e2) / pow(1 - e2 * sin(lat_r) * sin(lat_r), 1.5);
+    
+    // Radius of curvature in the prime vertical
+    double nu = a / sqrt(1 - e2 * sin(lat_r) * sin(lat_r));
+    
+    // Meters per degree latitude
+    *m_deg_lat = rho * M_PI / 180.0;
+    
+    // Meters per degree longitude
+    *m_deg_long = nu * cos(lat_r) * M_PI / 180.0;
 }
 
-//
-
-void UTM_Utilities::calc_m_per_deg(double lat_d,double *m_deg_lat,double *m_deg_long) {
-
-  double pi, deg2rad, sin_lat, cos_lat;
-
-  pi          = 4.0 * atan(1.0);
-  deg2rad     = pi / 180.0;
-
-  lat_d      *= deg2rad;
-
-  sin_lat     = sin(lat_d);
-  cos_lat     = cos(lat_d);
-
-#if 1 // Wikipedia 
-
-  double a = 0.08181922, b, radius;
-
-  b           = a * sin_lat;
-  radius      = 6378137.0 * cos_lat / sqrt(1.0 - (b * b));
-  *m_deg_long = deg2rad * radius;
-  *m_deg_lat  = 111132.954 - (559.822 * cos(2.0 * lat_d)) - 
-                (1.175 * cos(4.0 * lat_d));
-
-#else // Astronomical Algorithms
-
-  double a = 6378140.0, c, d, e = 0.08181922, rho, Rp = 0.0, Rm = 0.0;
-
-  rho         = 0.9983271 + (0.0016764 * cos(2.0 * lat_d)) - (0.0000035 * cos(4.0 * lat_d));
-  c           = e * sin_lat;
-  d           = sqrt(1.0 - (c * c));
-  Rp          = a * cos_lat / d;
-  *m_deg_long = deg2rad * Rp;
-  Rm          = a * (1.0 - (e * e)) / pow(d,3);
-  *m_deg_lat  = deg2rad * Rm;
-
-#endif
-
-  return;
+int UTM_Utilities::check_EU_op_id(const char *id, const char *secret) {
+    int i, j;
+    char s[32];
+    
+    memset(s, 0, sizeof(s));
+    
+    // Extract operator ID (skip first 3 chars "OP-")
+    for (i = 3, j = 0; id[i] && (j < 16); i++) {
+        if (id[i] != '-') {
+            s[j++] = id[i];
+        }
+    }
+    s[j] = '\0';
+    
+    // Append secret
+    for (i = 0; secret[i] && (j < 31); i++) {
+        s[j++] = secret[i];
+    }
+    s[j] = '\0';
+    
+    // Calculate and verify checksum
+    char check = luhn36_check(s);
+    
+    return (check == id[strlen(id) - 1]) ? 1 : 0;
 }
-
-/*
- *
- */
-
-int UTM_Utilities::check_EU_op_id(const char *id,const char *secret) {
-
-  int  i, j;
-  char check;
-
-  if ((strlen(id) != 16)&&(strlen(secret) != 3)) {
-
-    return 0;
-  }
-
-  for (i = 0, j = 0; i < 12; ++i) {
-
-    s[j++] = id[i + 3];
-  }
-  
-  for (i = 0; i < 3; ++i) {
-
-    s[j++] = secret[i];
-  }
-
-  s[j] = 0;
-
-  check = luhn36_check(s);
-  
-  return ((id[15] == check) ? 1: 0);
-}
-
-/*
- *
- */
 
 char UTM_Utilities::luhn36_check(const char *s) {
-
-  int       sum = 0, factor = 2, l, i, add, rem;
-  const int base = 36;
-
-  l = strlen(s);
-
-  for (i = l - 1; i >= 0; --i) {
-
-    add    = luhn36_c2i(s[i]) * factor;
-    sum   += (add / base) + (add % base);
-
-    factor = (factor == 2) ? 1: 2;
-  }
-
-  rem = sum % base;
-  
-  return luhn36_i2c(base - rem);
+    int sum = 0;
+    int len = strlen(s);
+    int factor = 2;
+    int i;
+    
+    for (i = len - 1; i >= 0; i--) {
+        int n = luhn36_c2i(s[i]);
+        n *= factor;
+        n = (n / 36) + (n % 36);
+        sum += n;
+        factor = (factor == 2) ? 1 : 2;
+    }
+    
+    int remainder = sum % 36;
+    int checkdigit = 36 - remainder;
+    
+    return luhn36_i2c(checkdigit % 36);
 }
-
-/*
- *
- */
 
 int UTM_Utilities::luhn36_c2i(char c) {
-
-  if ((c >= '0')&&(c <= '9')) {
-
-    return (c - '0');
-
-  } else if ((c >= 'a')&&(c <= 'z')) {
-
-    return (10 + (c - 'a'));
-
-  } else if ((c >= 'A')&&(c <= 'Z')) {
-
-    return (10 + (c - 'A'));
-  }
-
-  return 0;
+    if (c >= '0' && c <= '9') {
+        return c - '0';
+    } else if (c >= 'a' && c <= 'z') {
+        return c - 'a' + 10;
+    } else if (c >= 'A' && c <= 'Z') {
+        return c - 'A' + 10;
+    }
+    return 0;
 }
 
-/*
- *
- */
-
 char UTM_Utilities::luhn36_i2c(int i) {
-
-  if ((i >= 0)&&(i <= 9)) {
-
-    return ('0' + i);
-    
-  } else if ((i >= 10)&&(i < 36)) {
-
-    return ('a' + i - 10);
-  }
-
-  return '0';
+    if (i >= 0 && i <= 9) {
+        return '0' + i;
+    } else if (i >= 10 && i <= 35) {
+        return 'a' + (i - 10);
+    }
+    return '0';
 }
 
 /*
