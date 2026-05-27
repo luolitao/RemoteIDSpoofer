@@ -63,6 +63,7 @@
 #include "esp_wifi_types.h"
 #include "nvs_flash.h"
 #include "esp_netif.h"
+#include "esp_mac.h"
 
 esp_err_t esp_wifi_80211_tx(wifi_interface_t ifx,const void *buffer,int len,bool en_sys_seq);
 
@@ -123,7 +124,7 @@ void construct2() {
  *
  */
 
-void init2(char *ssid,int ssid_length,uint8_t *WiFi_mac_addr,uint8_t wifi_channel) {
+void init2(char *ssid, int channel, uint8_t *mac, uint8_t power) {
 
   int  status;
   char text[128];
@@ -139,7 +140,7 @@ void init2(char *ssid,int ssid_length,uint8_t *WiFi_mac_addr,uint8_t wifi_channe
 
   int8_t                wifi_power;
   wifi_config_t         ap_config;
-  static wifi_country_t country = {WIFI_COUNTRY_CC,1,WIFI_COUNTRY_NCHAN,20,WIFI_COUNTRY_POLICY_AUTO};
+  static wifi_country_t country = {"CN",1,13,20,WIFI_COUNTRY_POLICY_AUTO};
 
   memset(&ap_config,0,sizeof(ap_config));
   
@@ -154,28 +155,33 @@ void init2(char *ssid,int ssid_length,uint8_t *WiFi_mac_addr,uint8_t wifi_channe
 
 #else
   
+  // Frontend 已停止 WiFi，现在需要重新启动用于 spoofing
   wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
 
-  nvs_flash_init();
-  esp_netif_init();
-
-  ESP_ERROR_CHECK(esp_event_loop_create_default());
-  // Optional: register handler if needed
-  // ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &event_handler, NULL, NULL));
+  // 事件循环已在 Frontend 中创建，这里跳过或处理错误
+  esp_err_t err = esp_event_loop_create_default();
+  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+      ESP_LOGE("ID_OPEN", "Failed to create event loop: %s", esp_err_to_name(err));
+  }
+  
   esp_wifi_init(&init_cfg);
   esp_wifi_set_storage(WIFI_STORAGE_RAM);
   esp_wifi_set_mode(WIFI_MODE_AP);
-  esp_netif_create_default_wifi_ap();
 
   strcpy((char *) ap_config.ap.ssid,ssid);
-  strcpy((char *) ap_config.ap.password,password);
   ap_config.ap.ssid_len        = strlen(ssid);
-  ap_config.ap.channel         = (uint8_t) wifi_channel;
-  ap_config.ap.authmode        = WIFI_AUTH_WPA2_PSK;
-  ap_config.ap.ssid_hidden     = 0;
-  ap_config.ap.max_connection  = 4;
-  ap_config.ap.beacon_interval = 1000; // Pass beacon_interval from id_open.cpp?
-    
+  
+  // 确保频道在有效范围内 (1-13 for CN)
+  if (channel < 1 || channel > 13) {
+      ESP_LOGW("ID_OPEN", "Invalid channel %d, using default channel 6", channel);
+      channel = 6;
+  }
+  ap_config.ap.channel         = (uint8_t) channel;
+  ap_config.ap.authmode        = WIFI_AUTH_OPEN;
+  ap_config.ap.ssid_hidden     = 1;
+  ap_config.ap.max_connection  = 0;
+  ap_config.ap.beacon_interval = 100;
+  
   esp_wifi_set_config(WIFI_IF_AP,&ap_config);
   esp_wifi_start();
   esp_wifi_set_ps(WIFI_PS_NONE);
@@ -188,14 +194,10 @@ void init2(char *ssid,int ssid_length,uint8_t *WiFi_mac_addr,uint8_t wifi_channe
   // esp_wifi_set_max_tx_power(78);
   esp_wifi_get_max_tx_power(&wifi_power);
 
-  // no default mac addresses
-  // status = esp_read_mac(WiFi_mac_addr,ESP_MAC_WIFI_STA);  
-
   if (Debug_Serial) {
     
-    sprintf(text,"esp_read_mac():  %02x:%02x:%02x:%02x:%02x:%02x\r\n",
-            WiFi_mac_addr[0],WiFi_mac_addr[1],WiFi_mac_addr[2],
-            WiFi_mac_addr[3],WiFi_mac_addr[4],WiFi_mac_addr[5]);
+    sprintf(text,"mac address:     %02x:%02x:%02x:%02x:%02x:%02x\r\n",
+            mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
     // Debug_Serial->print(text);
 // power <= 72, dbm = power/4, but 78 = 20dbm. 
     sprintf(text,"max_tx_power():  %d dBm\r\n",(int) ((wifi_power + 2) / 4));

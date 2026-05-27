@@ -127,7 +127,13 @@ Frontend::~Frontend() {
 }
 
 void Frontend::handleClient() {
-    // 在 ESP-IDF 中，HTTP 服务器在自己的线程中运行
+    static unsigned long last_log = 0;
+    unsigned long now = millis();
+    
+    if (now - last_log > 10000) {  // 每10秒打印一次
+        ESP_LOGI("Frontend", "Waiting for client connection...");
+        last_log = now;
+    }    // 在 ESP-IDF 中，HTTP 服务器在自己的线程中运行
     // 这里只需要检查超时
     
     unsigned long current_time = esp_timer_get_time() / 1000;
