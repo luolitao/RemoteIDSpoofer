@@ -13,7 +13,11 @@
 
 #define DIAGNOSTICS  1
 
-#include "arduino_compat.h"
+#include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+#include <stdio.h>
 
 #include "utm.h"
 

@@ -1,47 +1,4 @@
-/* -*- tab-width: 2; mode: c; -*-
- * 
- * C++ class for Arduino to function as a wrapper around opendroneid.
- * This file has the ESP32 specific code.
- *
- * Copyright (c) 2020-2023, Steve Jack.
- *
- * Nov. '22:  Split out from id_open.cpp. 
- *
- * MIT licence.
- *
- * NOTES
- *
- * Bluetooth 4 works well with the opendroneid app on my G7.
- * WiFi beacon works with an ESP32 scanner, but with the G7 only the occasional frame gets through.
- *
- * Features
- *
- * esp_wifi_80211_tx() seems to zero the WiFi timestamp in addition to setting the sequence.
- * (The timestamp is set in ID_OpenDrone::transmit_wifi(), but WireShark says that it is zero.)
- *
- * BLE
- * 
- * A case of fighting the API to get it to do what I want.
- * For certain things, it is easier to bypass the 'user friendly' Arduino API and
- * use the esp_ functions.
- * 
- * Reference 
- * 
- * https://github.com/opendroneid/receiver-android/issues/7
- * 
- * From the Android app -
- * 
- * OpenDroneID Bluetooth beacons identify themselves by setting the GAP AD Type to
- * "Service Data - 16-bit UUID" and the value to 0xFFFA for ASTM International, ASTM Remote ID.
- * https://www.bluetooth.com/specifications/assigned-numbers/generic-access-profile/
- * https://www.bluetooth.com/specifications/assigned-numbers/16-bit-uuids-for-sdos/
- * Vol 3, Part B, Section 2.5.1 of the Bluetooth 5.1 Core Specification
- * The AD Application Code is set to 0x0D = Open Drone ID.
- * 
-    private static final UUID SERVICE_UUID = UUID.fromString("0000fffa-0000-1000-8000-00805f9b34fb");
-    private static final byte[] OPEN_DRONE_ID_AD_CODE = new byte[]{(byte) 0x0D};
- * 
- */
+
 
 #define DIAGNOSTICS 1
 
@@ -49,8 +6,12 @@
 
 #pragma GCC diagnostic warning "-Wunused-variable"
 
-#include "arduino_compat.h"
+#include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 
 #include "id_open.h"
 
@@ -155,16 +116,18 @@ void init2(char *ssid, int channel, uint8_t *mac, uint8_t power) {
 
 #else
   
-  // Frontend 已停止 WiFi，现在需要重新启动用于 spoofing
+  // Frontend 已通过 esp_wifi_deinit() 释放资源，现在重新初始化
   wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
 
-  // 事件循环已在 Frontend 中创建，这里跳过或处理错误
   esp_err_t err = esp_event_loop_create_default();
   if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-      ESP_LOGE("ID_OPEN", "Failed to create event loop: %s", esp_err_to_name(err));
+      ESP_LOGW("ID_OPEN", "Event loop create: %s (may already exist)", esp_err_to_name(err));
   }
   
-  esp_wifi_init(&init_cfg);
+  err = esp_wifi_init(&init_cfg);
+  if (err != ESP_OK) {
+      ESP_LOGE("ID_OPEN", "esp_wifi_init failed: %s", esp_err_to_name(err));
+  }
   esp_wifi_set_storage(WIFI_STORAGE_RAM);
   esp_wifi_set_mode(WIFI_MODE_AP);
 
@@ -178,9 +141,9 @@ void init2(char *ssid, int channel, uint8_t *mac, uint8_t power) {
   }
   ap_config.ap.channel         = (uint8_t) channel;
   ap_config.ap.authmode        = WIFI_AUTH_OPEN;
-  ap_config.ap.ssid_hidden     = 1;
+  ap_config.ap.ssid_hidden     = 0;   // SSID 必须可见，Remote ID Beacon 依赖完整帧结构
   ap_config.ap.max_connection  = 0;
-  ap_config.ap.beacon_interval = 100;
+  ap_config.ap.beacon_interval = 100; // 100 TU = 102.4ms，与自构造 Beacon 帧保持一致
   
   esp_wifi_set_config(WIFI_IF_AP,&ap_config);
   esp_wifi_start();
@@ -193,6 +156,9 @@ void init2(char *ssid, int channel, uint8_t *mac, uint8_t power) {
 
   // esp_wifi_set_max_tx_power(78);
   esp_wifi_get_max_tx_power(&wifi_power);
+  
+  ESP_LOGI("ID_OPEN", "WiFi AP initialized: channel=%d ssid=%s tx_power=%d dBm country=%s",
+           channel, ssid, (int)((wifi_power + 2) / 4), country.cc);
 
   if (Debug_Serial) {
     
@@ -283,6 +249,70 @@ int tag_ext_rates(uint8_t *beacon_frame,int beacon_offset) {
 //
 
 int misc_tags(uint8_t *beacon_frame,int beacon_offset) {
+
+  // HT Capabilities (tag 45) - 很多接收方期望看到此 tag
+  beacon_frame[beacon_offset++] = 0x2d; // Tag: HT Capabilities
+  beacon_frame[beacon_offset++] = 0x1a; // Length: 26
+  beacon_frame[beacon_offset++] = 0x6e; // HT Capabilities Info (L)
+  beacon_frame[beacon_offset++] = 0x00; // HT Capabilities Info (H)
+  beacon_frame[beacon_offset++] = 0x11; // A-MPDU Parameters
+  // Supported MCS Set (16 bytes)
+  beacon_frame[beacon_offset++] = 0xff; // Rx MCS Bitmask (bytes 0-3)
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00; // Rx highest supported data rate (L)
+  beacon_frame[beacon_offset++] = 0x00; // Rx highest supported data rate (H)
+  beacon_frame[beacon_offset++] = 0x00; // Tx Parameters
+  beacon_frame[beacon_offset++] = 0x00; // Reserved
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  // HT Extended Capabilities (2 bytes)
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  // Transmit Beamforming Capabilities (4 bytes)
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  // ASEL Capabilities (1 byte)
+  beacon_frame[beacon_offset++] = 0x00;
+
+  // HT Information (tag 61)
+  beacon_frame[beacon_offset++] = 0x3d; // Tag: HT Information
+  beacon_frame[beacon_offset++] = 0x16; // Length: 22
+  beacon_frame[beacon_offset++] = 0x06; // Primary Channel (channel 6)
+  // HT Information Set 1 (1 byte)
+  beacon_frame[beacon_offset++] = 0x01;
+  // HT Information Set 2 (2 bytes)
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  // HT Information Set 3 (2 bytes)
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  // Basic MCS Set (16 bytes, same as above)
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
+  beacon_frame[beacon_offset++] = 0x00;
 
   return beacon_offset;
 }

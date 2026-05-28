@@ -1,7 +1,15 @@
 #include "frontend.h"
 #include <sstream>
 #include <iomanip>
-#include "arduino_compat.h"
+#include "esp_timer.h"
+#include "esp_log.h"
+
+// NVS Key 常量定义
+const char* NVS_NAMESPACE  = "rid_config";
+const char* NVS_KEY_LAT    = "latitude";
+const char* NVS_KEY_LON    = "longitude";
+const char* NVS_KEY_DRONES = "num_drones";
+const char* NVS_KEY_INIT   = "initialized";
 
 static const char *TAG = "Frontend";
 
@@ -14,15 +22,15 @@ Frontend::Frontend(unsigned long idletime)
 {
     // 初始化 NVS
     nvs_handle_t nvs_handle;
-    esp_err_t err = nvs_open(nvs_namespace, NVS_READONLY, &nvs_handle);
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
     if (err == ESP_OK) {
         ESP_LOGI(TAG, "NVS found, reusing old values...");
         
         size_t required_size = sizeof(double);
-        nvs_get_blob(nvs_handle, latitude_key, &latitude, &required_size);
-        nvs_get_blob(nvs_handle, longitude_key, &longitude, &required_size);
+        nvs_get_blob(nvs_handle, NVS_KEY_LAT, &latitude, &required_size);
+        nvs_get_blob(nvs_handle, NVS_KEY_LON, &longitude, &required_size);
         
-        nvs_get_i32(nvs_handle, num_drones_key, (int32_t*)&num_drones);
+        nvs_get_i32(nvs_handle, NVS_KEY_DRONES, (int32_t*)&num_drones);
         
         nvs_close(nvs_handle);
     } else {
@@ -60,8 +68,8 @@ Frontend::Frontend(unsigned long idletime)
     config.server_port = 80;
     config.ctrl_port = 32768;
 
-    // 创建上下文
-    FrontendContext* context = new FrontendContext();
+    // 创建上下文（析构函数中释放）
+    context = new FrontendContext();
     context->frontend = this;
 
     // 注册 URI 处理器
@@ -124,11 +132,15 @@ Frontend::~Frontend() {
     if (server) {
         httpd_stop(server);
     }
+    if (context) {
+        delete context;
+        context = NULL;
+    }
 }
 
 void Frontend::handleClient() {
     static unsigned long last_log = 0;
-    unsigned long now = millis();
+    unsigned long now = (unsigned long)(esp_timer_get_time() / 1000);
     
     if (now - last_log > 10000) {  // 每10秒打印一次
         ESP_LOGI("Frontend", "Waiting for client connection...");
@@ -136,7 +148,7 @@ void Frontend::handleClient() {
     }    // 在 ESP-IDF 中，HTTP 服务器在自己的线程中运行
     // 这里只需要检查超时
     
-    unsigned long current_time = esp_timer_get_time() / 1000;
+    unsigned long current_time = (unsigned long)(esp_timer_get_time() / 1000);
     if (current_time > maxtime && !do_spoof) {
         startSpoof();
     }
@@ -169,9 +181,9 @@ esp_err_t Frontend::handleSetCoords(httpd_req_t *req) {
         
         // 保存到 NVS
         nvs_handle_t nvs_handle;
-        if (nvs_open(nvs_namespace, NVS_READWRITE, &nvs_handle) == ESP_OK) {
-            nvs_set_blob(nvs_handle, latitude_key, &latitude, sizeof(latitude));
-            nvs_set_blob(nvs_handle, longitude_key, &longitude, sizeof(longitude));
+        if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle) == ESP_OK) {
+            nvs_set_blob(nvs_handle, NVS_KEY_LAT, &latitude, sizeof(latitude));
+            nvs_set_blob(nvs_handle, NVS_KEY_LON, &longitude, sizeof(longitude));
             nvs_commit(nvs_handle);
             nvs_close(nvs_handle);
         }
@@ -194,8 +206,8 @@ esp_err_t Frontend::handleNumDrones(httpd_req_t *req) {
             
             // 保存到 NVS
             nvs_handle_t nvs_handle;
-            if (nvs_open(nvs_namespace, NVS_READWRITE, &nvs_handle) == ESP_OK) {
-                nvs_set_i32(nvs_handle, num_drones_key, num_drones);
+            if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle) == ESP_OK) {
+                nvs_set_i32(nvs_handle, NVS_KEY_DRONES, num_drones);
                 nvs_commit(nvs_handle);
                 nvs_close(nvs_handle);
             }
@@ -216,14 +228,15 @@ void Frontend::startSpoof() {
         server = NULL;
     }
     
-    // 断开 WiFi AP
+    // 断开 WiFi AP 并释放资源，以便后续重新初始化
     esp_wifi_stop();
+    esp_wifi_deinit();
     
     // 保存标志到 NVS
     nvs_handle_t nvs_handle;
-    if (nvs_open(nvs_namespace, NVS_READWRITE, &nvs_handle) == ESP_OK) {
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle) == ESP_OK) {
         int32_t initialized = 42;
-        nvs_set_i32(nvs_handle, "initialized", initialized);
+        nvs_set_i32(nvs_handle, NVS_KEY_INIT, initialized);
         nvs_commit(nvs_handle);
         nvs_close(nvs_handle);
     }

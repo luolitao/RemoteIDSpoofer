@@ -1,19 +1,3 @@
-#if defined(ARDUINO_ARCH_ESP32)
-
-#include <WiFi.h>
-#include <WebServer.h>
-
-#elif defined(ARDUINO_ARCH_ESP8266)
-
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-
-#else
-
-#pragma message ("Unknown Device!")
-
-#endif
-
 #ifndef FRONTEND_H
 #define FRONTEND_H
 
@@ -24,10 +8,19 @@
 #include "esp_wifi.h"
 #include "esp_netif.h"
 #include "esp_event.h"
+#include "id_open.h"
+
+// NVS Key 常量统一定义（仅 frontend.cpp 使用，用 extern 声明避免多文件重复定义）
+extern const char* NVS_NAMESPACE;
+extern const char* NVS_KEY_LAT;
+extern const char* NVS_KEY_LON;
+extern const char* NVS_KEY_DRONES;
+extern const char* NVS_KEY_INIT;
 
 class Frontend {
   private:
     httpd_handle_t server = NULL;
+    struct FrontendContext* context = NULL;  // 持有上下文指针用于释放
     
     std::string HTML();
     esp_err_t handleOnConnect(httpd_req_t *req);
@@ -36,11 +29,6 @@ class Frontend {
     void startSpoof();
     unsigned long maxtime = 0;
     unsigned long timer = 0;
-
-    const char* nvs_namespace = "rid_config";
-    const char* latitude_key = "latitude";
-    const char* longitude_key = "longitude";
-    const char* num_drones_key = "num_drones";
 
   public:
     Frontend(unsigned long idletime);

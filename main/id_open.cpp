@@ -1,39 +1,3 @@
-/* -*- tab-width: 2; mode: c; -*-
- * 
- * C++ class for Arduino to function as a wrapper around opendroneid.
- *
- * Copyright (c) 2020-2022, Steve Jack.
- *
- * Jan. '23:    Function to set the self ID.
- *
- * Nov. '22:    Moved the processor specific code to a separate file.
- *              Had another attempt to get beacon to work.
- *              Tidied up the scheduler.
- *
- * May '22:     opendroneid 2.0.
- *
- * Nov. '21:    Removed some redundant code. 
- *              Added option to use the new odid_wifi_build_message_pack_beacon_frame() function.
- * 
- * Oct. '21:    Updated for opendroneid release 1.0.
- *
- * May '21:     Packed WiFi.
- *
- * April '21:   Added support for beacon frames (untested). 
- *              Minor tidying up.
- *
- * January '21: Modified initialisation of BasicID.
- *              Authenication codes.
- * 
- *
- * MIT licence.
- *
- * NOTES
- *
- * When porting to a different processor, check the time() function. 
- *
- * 
- */
 
 #define DIAGNOSTICS 1
 
@@ -41,10 +5,18 @@
 
 #pragma GCC diagnostic warning "-Wunused-variable"
 
-#include "arduino_compat.h"
-
+#include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
 #include <time.h>
 #include <sys/time.h>
+#include <algorithm>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_timer.h"
+#include "esp_random.h"
+#include "esp_log.h"
 
 extern "C" {
   int      clock_gettime(clockid_t,struct timespec *);
@@ -260,6 +232,18 @@ void ID_OpenDrone::init(struct UTM_parameters *parameters) {
   encodeSystemMessage(&system_enc,system_data);
   encodeOperatorIDMessage(&operatorID_enc,operatorID_data);
 
+  // 关键修复：encode 函数不会设置 Valid 标志，但 odid_message_build_pack 需要它们
+  // 才能将消息打包到 Beacon 帧中
+  UAS_data.BasicIDValid[0]  = (basicID_data->IDType != ODID_IDTYPE_NONE) ? 1 : 0;
+  UAS_data.BasicIDValid[1]  = (UAS_data.BasicID[1].IDType != ODID_IDTYPE_NONE) ? 1 : 0;
+  UAS_data.LocationValid    = 1;
+  UAS_data.SelfIDValid      = (selfID_data->DescType != ODID_DESC_TYPE_TEXT || selfID_data->Desc[0]) ? 1 : 0;
+  UAS_data.SystemValid      = 1;
+  UAS_data.OperatorIDValid  = (operatorID_data->OperatorId[0] != 0) ? 1 : 0;
+  for (int i = 0; i < ODID_AUTH_MAX_PAGES; ++i) {
+    UAS_data.AuthValid[i]   = (auth_data[i]->AuthType != ODID_AUTH_NONE) ? 1 : 0;
+  }
+
   // 添加调试日志
   ESP_LOGI("ODID", "Init: UAV_id=[%s] UAS_op=[%s] ID_type=%d UA_type=%d",
            parameters->UAV_id, parameters->UAS_operator, 
@@ -276,7 +260,7 @@ void ID_OpenDrone::init(struct UTM_parameters *parameters) {
 
   ssid_length = strlen(ssid);
 
-  init2(ssid,ssid_length,WiFi_mac_addr,wifi_channel);
+  init2(ssid, wifi_channel, WiFi_mac_addr, 0);
 
 #if ID_OD_WIFI
 
@@ -485,7 +469,7 @@ int ID_OpenDrone::transmit_wifi(struct UTM_data *utm_data,int prepacked) {
     sequence = 1;
   }
 
-  msecs         = millis();
+  msecs         = (uint32_t)(esp_timer_get_time() / 1000);
   wifi_interval = msecs - last_wifi;
   last_wifi     = msecs;
   
@@ -495,7 +479,7 @@ int ID_OpenDrone::transmit_wifi(struct UTM_data *utm_data,int prepacked) {
   clock_gettime(CLOCK_REALTIME,&ts);
   usecs = (uint64_t)((double) ts.tv_sec * 1e6 + (double) ts.tv_nsec * 1e-3);
 #else
-  usecs = micros();
+  usecs = (uint64_t)esp_timer_get_time();
 #endif
 
 #if ID_OD_WIFI_NAN
@@ -606,6 +590,28 @@ int ID_OpenDrone::transmit_wifi(struct UTM_data *utm_data,int prepacked) {
     wifi_status = transmit_wifi2(beacon_frame,len2 = beacon_offset + length);
   }
 
+  // 详细诊断日志 - 每50次发送打印一次帧结构
+  static int diag_count = 0;
+  if (++diag_count % 50 == 0) {
+    int vendor_ie_offset = beacon_offset - 7;  // beacon_payload 实际写入的起始位置
+    ESP_LOGI("ODID", "Beacon frame: total_len=%d payload_len=%d wifi_status=%d", 
+             len2, length, wifi_status);
+    ESP_LOGI("ODID", "Beacon header[0]=0x%02x (should be 0x80 for Beacon)", beacon_frame[0]);
+    ESP_LOGI("ODID", "BSSID: %02x:%02x:%02x:%02x:%02x:%02x (should be our MAC)",
+             beacon_frame[16], beacon_frame[17], beacon_frame[18],
+             beacon_frame[19], beacon_frame[20], beacon_frame[21]);
+    ESP_LOGI("ODID", "Vendor IE offset=%d: tag=0x%02x len=0x%02x OUI=%02x:%02x:%02x (should be dd:??:fa:0b:bc)",
+             vendor_ie_offset,
+             beacon_frame[vendor_ie_offset], beacon_frame[vendor_ie_offset + 1],
+             beacon_frame[vendor_ie_offset + 2], beacon_frame[vendor_ie_offset + 3],
+             beacon_frame[vendor_ie_offset + 4]);
+    ESP_LOGI("ODID", "ODID msg type: 0x%02x counter: 0x%02x", 
+             beacon_frame[vendor_ie_offset + 5], beacon_frame[vendor_ie_offset + 6]);
+    ESP_LOGI("ODID", "Valid flags: BasicID[0]=%d Location=%d SelfID=%d System=%d Oper=%d",
+             UAS_data.BasicIDValid[0], UAS_data.LocationValid, 
+             UAS_data.SelfIDValid, UAS_data.SystemValid, UAS_data.OperatorIDValid);
+  }
+
 #if DIAGNOSTICS && 1
 
   if (Debug_Serial) {
@@ -650,7 +656,7 @@ int ID_OpenDrone::transmit_wifi(struct UTM_data *utm_data,int prepacked) {
 
 int ID_OpenDrone::transmit_ble(uint8_t *odid_msg,int length) {
   
-  msecs        = millis();
+  msecs        = (uint32_t)(esp_timer_get_time() / 1000);
   ble_interval = msecs - last_ble;
   last_ble     = msecs;
 
@@ -708,7 +714,7 @@ int ID_OpenDrone::transmit_ble(uint8_t *odid_msg,int length) {
     }
 
     sprintf(text,"%7lu %02x (%2d,%2d) .. ",
-            millis(),len - 1,len - 1,length);
+            (unsigned long)(esp_timer_get_time() / 1000),len - 1,len - 1,length);
     // // Debug_Serial->print(text);
 
     for (i = 0; (i < len)&&(i < 32); ++i) {

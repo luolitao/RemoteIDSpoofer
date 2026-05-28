@@ -13,7 +13,6 @@
 
 #include "spoofer.h"
 #include "frontend.h"
-#include "arduino_compat.h"
 
 static const char *TAG = "RemoteIDSpoofer";
 
