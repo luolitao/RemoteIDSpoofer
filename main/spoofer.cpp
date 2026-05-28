@@ -1,10 +1,34 @@
 #include "spoofer.h"
-#include <algorithm>
-#include <cmath>
 
 void Spoofer::init() {
+#if ID_CHINA
+  // 默认 CAAC 登记码（无参数版本的回退）
+  init("123456789012345");
+#else
+  _init_common();
+  squitter.init(&utm_parameters);
+#endif
+}
+
+#if ID_CHINA
+void Spoofer::init(const char *caac_reg) {
+  // 使用传入的 CAAC 登记码
+  _init_common();
+  strncpy(utm_parameters.caac_registration, caac_reg,
+          sizeof(utm_parameters.caac_registration) - 1);
+  utm_parameters.caac_registration[sizeof(utm_parameters.caac_registration) - 1] = '\0';
+  utm_parameters.caac_uom_code = 0x01;
+
+  // 初始化 squitter（会触发 WiFi 初始化，由 init2 的 static guard 确保只执行一次）
+  squitter.init(&utm_parameters);
+}
+#endif
+
+void Spoofer::_init_common() {
   // 时间相关初始化
   memset(&clock_tm, 0, sizeof(struct tm));
+  memset(&tv, 0, sizeof(tv));
+  memset(&utc, 0, sizeof(utc));
   clock_tm.tm_hour  =  10;
   clock_tm.tm_mday  =  16;
   clock_tm.tm_mon   =  11;
@@ -17,24 +41,15 @@ void Spoofer::init() {
   memset(&utm_parameters, 0, sizeof(utm_parameters));
   
   // 生成随机ID
-  String id = getID();
-  strncpy(utm_parameters.UAS_operator, id.c_str(), sizeof(utm_parameters.UAS_operator) - 1);
+  char id_buf[20];
+  getID(id_buf, sizeof(id_buf));
+  strncpy(utm_parameters.UAS_operator, id_buf, sizeof(utm_parameters.UAS_operator) - 1);
   utm_parameters.UAS_operator[sizeof(utm_parameters.UAS_operator) - 1] = '\0';
   
   utm_parameters.region      = 1;
   utm_parameters.EU_category = 1;
   utm_parameters.EU_class    = 5;
   
-#if ID_CHINA
-  // 设置 CAAC 实名登记码示例 (实际使用时应从 NVS 或配置获取)
-  // 格式: 15位数字，例如: 123456789012345
-  strncpy(utm_parameters.caac_registration, "123456789012345", 
-          sizeof(utm_parameters.caac_registration) - 1);
-  utm_parameters.caac_registration[sizeof(utm_parameters.caac_registration) - 1] = '\0';
-  utm_parameters.caac_uom_code = 0x01;
-#endif
-  
-  squitter.init(&utm_parameters);
   memset(&utm_data, 0, sizeof(utm_data));
 }
 
@@ -54,7 +69,7 @@ void Spoofer::updateLocation(float latitude, float longitude) {
 
 void Spoofer::update() {
   // FAA 要求最低频率为 1 Hz，这里我们使用 2 Hz
-  uint32_t current_time = millis();
+  uint32_t current_time = (uint32_t)(esp_timer_get_time() / 1000);
   if ((current_time - last_update) < 200) {
     return;
   }
@@ -100,11 +115,14 @@ void Spoofer::update() {
   squitter.transmit(&utm_data);
 }
 
-String Spoofer::getID() {
-  String characters = String("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz");
-  String ID = "";
-  for (int i = 0; i < 16; i++) {
-    ID.concat(characters[(esp_random() % characters.length())]);
+void Spoofer::getID(char *buf, size_t buf_size) {
+  static const char characters[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  const size_t char_len = sizeof(characters) - 1;  // exclude null terminator
+  const size_t id_len = 16;
+  
+  size_t n = (id_len < buf_size - 1) ? id_len : (buf_size - 1);
+  for (size_t i = 0; i < n; i++) {
+    buf[i] = characters[esp_random() % char_len];
   }
-  return ID;
+  buf[n] = '\0';
 }

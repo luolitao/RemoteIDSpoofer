@@ -1,11 +1,14 @@
 #ifndef SPOOFER_H
 #define SPOOFER_H
 
-#include "arduino_compat.h"
-#include <cmath>
-#include <algorithm>
+#include <stdint.h>
+#include <string.h>
 #include <time.h>
 #include <sys/time.h>
+#include <cmath>
+#include <algorithm>
+#include "esp_timer.h"
+#include "esp_random.h"
 
 #include "utm.h"
 #include "id_open.h"
@@ -32,17 +35,21 @@ class Spoofer {
     float x = 0.0, y = 0.0, z = 0.0;
 
     // runtime time variables
-    time_t time_2;
+    time_t time_2 = 0;
     struct tm clock_tm;
-    struct timeval tv = {0,0};
-    struct timezone utc = {0,0};
+    struct timeval tv;
+    struct timezone utc;
     uint32_t last_update = 0;
 
-    // random ID generator
-    String getID();
+    // random ID generator (writes to buf, max 20 chars)
+    void getID(char *buf, size_t buf_size);
+    void _init_common();  // 公共初始化逻辑（不含 CAAC）
 
   public:
     void init();
+#if ID_CHINA
+    void init(const char *caac_reg);  // 接收 CAAC 登记码的初始化
+#endif
     void updateLocation(float latitude, float longitude);
     void update();
 };

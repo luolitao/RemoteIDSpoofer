@@ -13,12 +13,13 @@
 
 #define DIAGNOSTICS  1
 
-#include "arduino_compat.h"
+#include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+#include <stdio.h>
 
 #include "utm.h"
-#include <math.h>
-#include <string.h>
-#include <stdio.h>
 
 // WGS84 constants
 static const double a = 6378137.0;

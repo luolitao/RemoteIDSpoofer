@@ -1,5 +1,6 @@
 {
     "idf.currentSetup": "C:\\Users\\luolitao\\esp\\v6.0\\esp-idf",
     "idf.portWin": "COM18",
-    "idf.flashType": "UART"
+    "idf.flashType": "UART",
+    "idf.port": "/dev/tty.usbmodem211401"
 }

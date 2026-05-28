@@ -1,50 +1,19 @@
-/* -*- tab-width: 2; mode: c; -*-
- * 
- * C++ class for Arduino to function as a wrapper around opendroneid.
- *
- * Copyright (c) 2020-2022, Steve Jack.
- *
- * Jan. '23:    Function to set the self ID.
- *
- * Nov. '22:    Moved the processor specific code to a separate file.
- *              Had another attempt to get beacon to work.
- *              Tidied up the scheduler.
- *
- * May '22:     opendroneid 2.0.
- *
- * Nov. '21:    Removed some redundant code. 
- *              Added option to use the new odid_wifi_build_message_pack_beacon_frame() function.
- * 
- * Oct. '21:    Updated for opendroneid release 1.0.
- *
- * May '21:     Packed WiFi.
- *
- * April '21:   Added support for beacon frames (untested). 
- *              Minor tidying up.
- *
- * January '21: Modified initialisation of BasicID.
- *              Authenication codes.
- * 
- *
- * MIT licence.
- *
- * NOTES
- *
- * When porting to a different processor, check the time() function. 
- *
- * 
- */
-
 #define DIAGNOSTICS 0
 
-//
 
 #pragma GCC diagnostic warning "-Wunused-variable"
 
-#include "arduino_compat.h"
-
+#include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
 #include <time.h>
 #include <sys/time.h>
+#include <algorithm>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_timer.h"
+#include "esp_random.h"
 
 extern "C" {
   int      clock_gettime(clockid_t,struct timespec *);
@@ -269,7 +238,7 @@ void ID_OpenDrone::init(UTM_parameters *parameters) {
 
   ssid_length = strlen(ssid);
 
-  init2(ssid,ssid_length,WiFi_mac_addr,wifi_channel);
+  init2(ssid,wifi_channel,WiFi_mac_addr,0);
 
 #if ID_OD_WIFI
 
@@ -433,7 +402,7 @@ int ID_OpenDrone::transmit(struct UTM_data *utm_data) {
 
   i       = 0;
   text[0] = 0;
-  msecs   = millis();
+  msecs   = (uint32_t)(esp_timer_get_time() / 1000);
 
   // For the ODID 2.0 and auth timestamps.
 #if defined(ARDUINO_ARCH_NRF52) || defined(ARDUINO_ARCH_ESP8266)
@@ -677,7 +646,7 @@ int ID_OpenDrone::transmit_wifi(struct UTM_data *utm_data,int prepacked) {
     sequence = 1;
   }
 
-  msecs         = millis();
+  msecs         = (uint32_t)(esp_timer_get_time() / 1000);
   wifi_interval = msecs - last_wifi;
   last_wifi     = msecs;
   
@@ -687,7 +656,7 @@ int ID_OpenDrone::transmit_wifi(struct UTM_data *utm_data,int prepacked) {
   clock_gettime(CLOCK_REALTIME,&ts);
   usecs = (uint64_t)((double) ts.tv_sec * 1e6 + (double) ts.tv_nsec * 1e-3);
 #else
-  usecs = micros();
+  usecs = (uint64_t)esp_timer_get_time();
 #endif
 
 #if ID_OD_WIFI_NAN
@@ -842,7 +811,7 @@ int ID_OpenDrone::transmit_wifi(struct UTM_data *utm_data,int prepacked) {
 
 int ID_OpenDrone::transmit_ble(uint8_t *odid_msg,int length) {
   
-  msecs        = millis();
+  msecs        = (uint32_t)(esp_timer_get_time() / 1000);
   ble_interval = msecs - last_ble;
   last_ble     = msecs;
 
@@ -900,7 +869,7 @@ int ID_OpenDrone::transmit_ble(uint8_t *odid_msg,int length) {
     }
 
     sprintf(text,"%7lu %02x (%2d,%2d) .. ",
-            millis(),len - 1,len - 1,length);
+            (unsigned long)(esp_timer_get_time() / 1000),len - 1,len - 1,length);
     // // Debug_Serial->print(text);
 
     for (i = 0; (i < len)&&(i < 32); ++i) {

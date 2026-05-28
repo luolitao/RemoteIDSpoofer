@@ -10,7 +10,11 @@
 
 #pragma GCC diagnostic warning "-Wunused-variable"
 
-#include "arduino_compat.h"
+#include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+
 #include "id_open.h"
 
 #if ID_CHINA

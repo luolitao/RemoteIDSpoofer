@@ -1,47 +1,3 @@
-/* -*- tab-width: 2; mode: c; -*-
- * 
- * C++ class for Arduino to function as a wrapper around opendroneid.
- * This file has the ESP32 specific code.
- *
- * Copyright (c) 2020-2023, Steve Jack.
- *
- * Nov. '22:  Split out from id_open.cpp. 
- *
- * MIT licence.
- *
- * NOTES
- *
- * Bluetooth 4 works well with the opendroneid app on my G7.
- * WiFi beacon works with an ESP32 scanner, but with the G7 only the occasional frame gets through.
- *
- * Features
- *
- * esp_wifi_80211_tx() seems to zero the WiFi timestamp in addition to setting the sequence.
- * (The timestamp is set in ID_OpenDrone::transmit_wifi(), but WireShark says that it is zero.)
- *
- * BLE
- * 
- * A case of fighting the API to get it to do what I want.
- * For certain things, it is easier to bypass the 'user friendly' Arduino API and
- * use the esp_ functions.
- * 
- * Reference 
- * 
- * https://github.com/opendroneid/receiver-android/issues/7
- * 
- * From the Android app -
- * 
- * OpenDroneID Bluetooth beacons identify themselves by setting the GAP AD Type to
- * "Service Data - 16-bit UUID" and the value to 0xFFFA for ASTM International, ASTM Remote ID.
- * https://www.bluetooth.com/specifications/assigned-numbers/generic-access-profile/
- * https://www.bluetooth.com/specifications/assigned-numbers/16-bit-uuids-for-sdos/
- * Vol 3, Part B, Section 2.5.1 of the Bluetooth 5.1 Core Specification
- * The AD Application Code is set to 0x0D = Open Drone ID.
- * 
-    private static final UUID SERVICE_UUID = UUID.fromString("0000fffa-0000-1000-8000-00805f9b34fb");
-    private static final byte[] OPEN_DRONE_ID_AD_CODE = new byte[]{(byte) 0x0D};
- * 
- */
 
 #define DIAGNOSTICS 1
 
@@ -49,8 +5,12 @@
 
 #pragma GCC diagnostic warning "-Wunused-variable"
 
-#include "arduino_compat.h"
+#include <stdint.h>
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 
 #include "id_open.h"
 
@@ -144,6 +104,9 @@ void init2(char *ssid, int channel, uint8_t *mac, uint8_t power) {
 
   memset(&ap_config,0,sizeof(ap_config));
   
+  // 所有 Spoofer 共享同一个 WiFi 硬件，只需初始化一次
+  static bool wifi_initialized = false;
+  
 #if ESP32_WIFI_OPTION
 
   // WiFi.softAP(ssid,"password",wifi_channel);
@@ -155,46 +118,59 @@ void init2(char *ssid, int channel, uint8_t *mac, uint8_t power) {
 
 #else
   
-  // Frontend 已停止 WiFi，现在需要重新启动用于 spoofing
-  wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
+  // WiFi 已在 Frontend::startSpoof() 中停止并反初始化
+  if (!wifi_initialized) {
+      wifi_init_config_t init_cfg = WIFI_INIT_CONFIG_DEFAULT();
 
-  // 事件循环已在 Frontend 中创建，这里跳过或处理错误
-  esp_err_t err = esp_event_loop_create_default();
-  if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-      ESP_LOGE("ID_OPEN", "Failed to create event loop: %s", esp_err_to_name(err));
-  }
-  
-  esp_wifi_init(&init_cfg);
-  esp_wifi_set_storage(WIFI_STORAGE_RAM);
-  esp_wifi_set_mode(WIFI_MODE_AP);
+      // 事件循环已在 Frontend 中创建，这里跳过或处理错误
+      esp_err_t err = esp_event_loop_create_default();
+      if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+          ESP_LOGE("ID_OPEN", "Failed to create event loop: %s", esp_err_to_name(err));
+      }
+      
+      err = esp_wifi_init(&init_cfg);
+      if (err != ESP_OK) {
+          ESP_LOGE("ID_OPEN", "esp_wifi_init failed: %s", esp_err_to_name(err));
+          return;
+      }
+      
+      esp_wifi_set_storage(WIFI_STORAGE_RAM);
+      esp_wifi_set_mode(WIFI_MODE_AP);
 
-  strcpy((char *) ap_config.ap.ssid,ssid);
-  ap_config.ap.ssid_len        = strlen(ssid);
-  
-  // 确保频道在有效范围内 (1-13 for CN)
-  if (channel < 1 || channel > 13) {
-      ESP_LOGW("ID_OPEN", "Invalid channel %d, using default channel 6", channel);
-      channel = 6;
+      strcpy((char *) ap_config.ap.ssid,ssid);
+      ap_config.ap.ssid_len        = strlen(ssid);
+      
+      // 确保频道在有效范围内 (1-13 for CN)
+      if (channel < 1 || channel > 13) {
+          ESP_LOGW("ID_OPEN", "Invalid channel %d, using default channel 6", channel);
+          channel = 6;
+      }
+      ap_config.ap.channel         = (uint8_t) channel;
+      ap_config.ap.authmode        = WIFI_AUTH_OPEN;
+      ap_config.ap.ssid_hidden     = 1;
+      ap_config.ap.max_connection  = 0;
+      ap_config.ap.beacon_interval = 100;
+      
+      esp_wifi_set_config(WIFI_IF_AP,&ap_config);
+      esp_wifi_start();
+      esp_wifi_set_ps(WIFI_PS_NONE);
+      
+      wifi_initialized = true;
+      ESP_LOGI("ID_OPEN", "WiFi initialized for spoofing on channel %d", channel);
+  } else {
+      ESP_LOGI("ID_OPEN", "WiFi already initialized, skipping re-init");
   }
-  ap_config.ap.channel         = (uint8_t) channel;
-  ap_config.ap.authmode        = WIFI_AUTH_OPEN;
-  ap_config.ap.ssid_hidden     = 1;
-  ap_config.ap.max_connection  = 0;
-  ap_config.ap.beacon_interval = 100;
-  
-  esp_wifi_set_config(WIFI_IF_AP,&ap_config);
-  esp_wifi_start();
-  esp_wifi_set_ps(WIFI_PS_NONE);
 
 #endif
 
-  esp_wifi_set_country(&country);
-  status = esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW20);
+  if (wifi_initialized) {
+      esp_wifi_set_country(&country);
+      status = esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW20);
 
-  // esp_wifi_set_max_tx_power(78);
-  esp_wifi_get_max_tx_power(&wifi_power);
+      // esp_wifi_set_max_tx_power(78);
+      esp_wifi_get_max_tx_power(&wifi_power);
 
-  if (Debug_Serial) {
+      if (Debug_Serial) {
     
     sprintf(text,"mac address:     %02x:%02x:%02x:%02x:%02x:%02x\r\n",
             mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);
@@ -205,6 +181,8 @@ void init2(char *ssid, int channel, uint8_t *mac, uint8_t power) {
     sprintf(text,"wifi country:    %s\r\n",country.cc);
     // Debug_Serial->print(text);
   }
+
+  }  // end if (wifi_initialized)
 
 #endif // WIFI
 

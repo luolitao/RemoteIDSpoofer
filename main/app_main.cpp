@@ -13,7 +13,6 @@
 
 #include "spoofer.h"
 #include "frontend.h"
-#include "arduino_compat.h"
 
 static const char *TAG = "RemoteIDSpoofer";
 
@@ -48,8 +47,21 @@ extern "C" void app_main(void)
     
     // 初始化欺骗器并更新位置
     num_spoofers = frontend.num_drones;
+    if (num_spoofers <= 0) {
+        ESP_LOGW(TAG, "num_spoofers is %d, defaulting to 1", num_spoofers);
+        num_spoofers = 1;
+    }
+    if (num_spoofers > MAX_SPOOFERS) {
+        ESP_LOGW(TAG, "num_spoofers %d exceeds MAX_SPOOFERS %d, clamping", num_spoofers, MAX_SPOOFERS);
+        num_spoofers = MAX_SPOOFERS;
+    }
+    
     for (int i = 0; i < num_spoofers; i++) {
+#if ID_CHINA
+        spoofers[i].init(frontend.caac_registration);
+#else
         spoofers[i].init();
+#endif
         spoofers[i].updateLocation(frontend.latitude, frontend.longitude);
     }
 

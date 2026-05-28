@@ -31,9 +31,18 @@
 #include "esp_event.h"
 #include "id_open.h"
 
+// NVS Key 常量统一定义
+static const char* NVS_NAMESPACE    = "rid_config";
+static const char* NVS_KEY_LAT      = "latitude";
+static const char* NVS_KEY_LON      = "longitude";
+static const char* NVS_KEY_DRONES   = "num_drones";
+static const char* NVS_KEY_INIT     = "initialized";
+static const char* NVS_KEY_CAAC_REG = "caac_reg";
+
 class Frontend {
   private:
     httpd_handle_t server = NULL;
+    struct FrontendContext* context = NULL;  // 持有上下文指针用于释放
     
     std::string HTML();
     esp_err_t handleOnConnect(httpd_req_t *req);
@@ -42,11 +51,6 @@ class Frontend {
     void startSpoof();
     unsigned long maxtime = 0;
     unsigned long timer = 0;
-
-    const char* nvs_namespace = "rid_config";
-    const char* latitude_key = "latitude";
-    const char* longitude_key = "longitude";
-    const char* num_drones_key = "num_drones";
 
   public:
     Frontend(unsigned long idletime);
